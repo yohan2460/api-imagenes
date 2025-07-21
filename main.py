@@ -18,8 +18,9 @@ from typing import List, Dict, Any, Optional
 from pathlib import Path
 import asyncio
 import time
+import threading
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Path
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -104,127 +105,9 @@ def initialize_ocr():
 # Inicializar OCR al arrancar
 initialize_ocr()
 
-@app.get("/")
-async def root():
-    """Endpoint raíz con información de la API"""
-    return {
-        "message": "MADEIN Image Processing API",
-        "version": "1.0.0",
-        "status": "active",
-        "dependencies_loaded": DEPENDENCIES_OK,
-        "timestamp": time.time(),
-        "endpoints": {
-            "health": "/health",
-            "test": "/test",
-            "extract_images": "/run-image-extractor",
-            "extract_individual": "/extract-individual-comprobantes",
-            "extract_grid": "/extract-grid-comprobantes",
-            "process_pdf": "/process-pdf",
-            "process_bancolombia": "/process-bancolombia",
-            "docs": "/docs"
-        }
-    }
-
-@app.get("/test")
-async def test_endpoint():
-    """🧪 ENDPOINT DE PRUEBA - Verificar que la API funciona básicamente"""
-    try:
-        # Pruebas básicas sin dependencias pesadas
-        test_results = {
-            "🚀 api_status": "OK",
-            "⏰ timestamp": time.time(),
-            "📁 directories": {
-                "base_dir": str(BASE_DIR),
-                "upload_dir_exists": UPLOAD_DIR.exists(),
-                "output_dir_exists": OUTPUT_DIR.exists(),
-            },
-            "🐍 python_info": {
-                "version": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}",
-                "platform": os.sys.platform,
-            },
-            "📦 dependencies": {
-                "heavy_packages_loaded": DEPENDENCIES_OK,
-                "ocr_engine": OCR_ENGINE,
-            }
-        }
-        
-        # Prueba de procesamiento básico si las dependencias están disponibles
-        if DEPENDENCIES_OK:
-            try:
-                # Crear una imagen de prueba pequeña
-                import numpy as np
-                test_image = np.zeros((100, 100, 3), dtype=np.uint8)
-                test_results["🖼️ opencv_test"] = "OK - Puede crear imágenes"
-            except Exception as e:
-                test_results["🖼️ opencv_test"] = f"Error: {e}"
-        else:
-            test_results["🖼️ opencv_test"] = "Dependencias no cargadas"
-        
-        # Simulación de procesamiento (sin archivos reales)
-        test_results["⚡ simulation"] = {
-            "fake_session_id": f"test_session_{int(time.time())}",
-            "fake_comprobantes_found": 3,
-            "processing_time_ms": 150,
-            "mock_data": [
-                {"id": 1, "documento_id": "TEST001", "status": "simulated"},
-                {"id": 2, "documento_id": "TEST002", "status": "simulated"},
-                {"id": 3, "documento_id": "TEST003", "status": "simulated"}
-            ]
-        }
-        
-        return {
-            "✅ test_status": "SUCCESS",
-            "📝 message": "API funciona correctamente - Lista para procesar archivos",
-            "📊 results": test_results,
-            "🔗 next_steps": [
-                "1. Si dependencies_loaded=true, puedes usar /run-image-extractor",
-                "2. Si dependencies_loaded=false, ejecuta: pip install -r requirements.txt",
-                "3. Visita /docs para ver documentación completa",
-                "4. Prueba con /health para diagnóstico detallado"
-            ]
-        }
-        
-    except Exception as e:
-        return {
-            "❌ test_status": "ERROR",
-            "📝 message": f"Error en la prueba: {str(e)}",
-            "🔧 suggestion": "Verifica la instalación de Python y FastAPI"
-        }
-
-@app.get("/health")
-async def health_check():
-    """Verificar estado de la API y dependencias"""
-    health_data = {
-        "api": "ok",
-        "timestamp": time.time(),
-        "dependencies_loaded": DEPENDENCIES_OK,
-        "python_version": f"{os.sys.version_info.major}.{os.sys.version_info.minor}.{os.sys.version_info.micro}",
-        "upload_dir": str(UPLOAD_DIR),
-        "output_dir": str(OUTPUT_DIR),
-    }
-    
-    # Verificar dependencias solo si están cargadas
-    if DEPENDENCIES_OK:
-        try:
-            cv2_version = cv2.__version__
-            opencv_status = "ok"
-        except:
-            opencv_status = "error"
-            cv2_version = "not available"
-        
-        health_data.update({
-            "ocr_engine": OCR_ENGINE,
-            "opencv": opencv_status,
-            "opencv_version": cv2_version,
-        })
-    else:
-        health_data.update({
-            "ocr_engine": "dependencies_not_loaded",
-            "opencv": "dependencies_not_loaded",
-            "opencv_version": "install_requirements",
-        })
-    
-    return health_data
+# Diccionario global en memoria para pagos por NIT
+pagos_por_nit = {}
+lock_pagos = threading.Lock()
 
 def buscar_numero_documento(texto: str, debug: bool = False) -> str:
     """Busca un número de documento válido dentro de un texto OCR."""
@@ -252,6 +135,26 @@ def buscar_numero_documento(texto: str, debug: bool = False) -> str:
                 return num
     if debug:
         print(f"    ❌ No se encontró patrón válido.")
+    return None
+
+def buscar_monto(texto: str, debug: bool = False) -> str:
+    """Busca el monto pagado en el texto OCR de un comprobante."""
+    if not texto:
+        return None
+    patterns = [
+        r"Monto[:\s\$]*([\d\.,]+)",
+        r"Valor[:\s\$]*([\d\.,]+)",
+        r"Pago[:\s\$]*([\d\.,]+)",
+        r"([\d]{1,3}(?:\.[\d]{3})+,\d{2})"
+    ]
+    for i, patron in enumerate(patterns):
+        matches = re.findall(patron, texto)
+        if matches:
+            if debug:
+                print(f"    💰 Patrón monto {i+1} encontró: '{matches[0]}'")
+            return matches[0]
+    if debug:
+        print(f"    ❌ No se encontró monto válido.")
     return None
 
 def extract_documento_with_ocr(img, debug: bool = False) -> str:
@@ -410,19 +313,38 @@ def detect_comprobantes_in_image(page_img, min_area: int = 50000, debug: bool = 
             if debug:
                 print(f"  📄 Comprobante {i}: recorte {x,y,w,h}")
             doc = extract_documento_from_image(crop, debug, page_idx, i)
-            
+
+            # --- NUEVO: Extraer monto usando OCR completo ---
+            texto_ocr = None
+            monto = None
+            if DEPENDENCIES_OK:
+                try:
+                    if OCR_ENGINE == "easyocr":
+                        results = OCR_READER.readtext(crop, detail=0)
+                        texto_ocr = ' '.join(results)
+                    elif OCR_ENGINE == "pytesseract":
+                        import pytesseract
+                        texto_ocr = pytesseract.image_to_string(crop)
+                    if texto_ocr:
+                        monto = buscar_monto(texto_ocr, debug)
+                except Exception as e:
+                    if debug:
+                        print(f"    ⚠️ Error extrayendo monto: {e}")
+
             comprobante = {
                 "id": i,
                 "documento_id": doc,
                 "coordinates": {"x": x, "y": y, "width": w, "height": h},
                 "area": w * h,
-                "roi_image": crop
+                "roi_image": crop,
+                "monto": monto,
+                "ocr_text": texto_ocr
             }
             
             comprobantes.append(comprobante)
             
             if debug:
-                print(f"[+] Página {page_idx} · Comprobante {i} → {doc}")
+                print(f"[+] Página {page_idx} · Comprobante {i} → {doc} · 💰 Monto: {monto}")
 
         if not comprobantes:
             print(f"⚠️  No se detectaron comprobantes en página {page_idx}.")
@@ -508,6 +430,16 @@ async def run_image_extractor(
                         comp['file_path'] = str(output_path)
                         comp['page'] = page_idx + 1
                         del comp['roi_image']  # No enviar imagen en response
+
+                        # --- NUEVO: Guardar relación NIT → pagos ---
+                        if comp['documento_id']:
+                            with lock_pagos:
+                                pagos_por_nit.setdefault(comp['documento_id'], []).append({
+                                    "monto": comp.get("monto"),
+                                    "filename": filename,
+                                    "session_id": session_id,
+                                    "page": page_idx + 1
+                                })
                         
                     extracted_comprobantes.extend(comprobantes)
                     
@@ -531,6 +463,16 @@ async def run_image_extractor(
                 comp['filename'] = filename
                 comp['file_path'] = str(output_path)
                 del comp['roi_image']
+
+                # --- NUEVO: Guardar relación NIT → pagos ---
+                if comp['documento_id']:
+                    with lock_pagos:
+                        pagos_por_nit.setdefault(comp['documento_id'], []).append({
+                            "monto": comp.get("monto"),
+                            "filename": filename,
+                            "session_id": session_id,
+                            "page": 1
+                        })
                 
             extracted_comprobantes = comprobantes
         
@@ -769,6 +711,14 @@ async def cleanup_temp_file(file_path: Path):
             os.remove(file_path)
     except Exception as e:
         print(f"Error limpiando archivo temporal {file_path}: {e}")
+
+# Nuevo endpoint para consultar pagos por NIT
+@app.get("/pagos-por-nit/{nit}")
+async def get_pagos_por_nit(nit: str = Path(..., description="NIT o documento_id a consultar")):
+    """Consultar todos los pagos (montos) asociados a un NIT/documento_id."""
+    with lock_pagos:
+        pagos = pagos_por_nit.get(nit, [])
+    return {"nit": nit, "pagos": pagos}
 
 if __name__ == "__main__":
     print("🚀 Iniciando MADEIN Image Processing API...")
