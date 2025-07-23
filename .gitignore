@@ -45,8 +45,6 @@ tmp/
 .idea/
 *.swp
 *.swo
-*.env
-venv_local/
 
 # Sistema
 .DS_Store
