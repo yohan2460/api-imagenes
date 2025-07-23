@@ -40,6 +40,8 @@ temp/
 tmp/
 *.tmp
 
+venv_local/
+
 # IDE
 .vscode/
 .idea/
