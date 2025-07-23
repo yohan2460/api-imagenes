@@ -20,7 +20,7 @@ import asyncio
 import time
 import threading
 
-from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks, Path
+from fastapi import FastAPI, File, UploadFile, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -714,7 +714,7 @@ async def cleanup_temp_file(file_path: Path):
 
 # Nuevo endpoint para consultar pagos por NIT
 @app.get("/pagos-por-nit/{nit}")
-async def get_pagos_por_nit(nit: str = Path(..., description="NIT o documento_id a consultar")):
+async def get_pagos_por_nit(nit: str):
     """Consultar todos los pagos (montos) asociados a un NIT/documento_id."""
     with lock_pagos:
         pagos = pagos_por_nit.get(nit, [])
